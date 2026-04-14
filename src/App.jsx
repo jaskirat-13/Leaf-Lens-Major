@@ -2230,17 +2230,7 @@ function App() {
                   <h3 className="demo-title" id="detection-heading">
                     {t.detectCropDisease}
                   </h3>
-                  <button
-                    type="button"
-                    className={`interview-toggle${isInterviewMode ? " active" : ""}`}
-                    onClick={() => {
-                      setIsInterviewMode((prev) => !prev);
-                      setDemoUploadStep(1);
-                      setDiseaseResult(null);
-                    }}
-                  >
-                    Interview Mode: {isInterviewMode ? "ON" : "OFF"}
-                  </button>
+                  
                   <p className="panel-copy">
                     Simulate a farmer uploading a leaf image and receiving a clear diagnosis card with crop context and
                     next-step advice.
