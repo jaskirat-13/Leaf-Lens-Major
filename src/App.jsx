@@ -107,7 +107,7 @@ const geoRequestTimeoutMs = 7000;
 const overpassRequestTimeoutMs = 8000;
 const isLocalhost =
   typeof window !== "undefined" && /^(localhost|127\.0\.0\.1|::1)$/i.test(window.location.hostname);
-const defaultHostedApiUrl = "https://leaflens-ml-api-wzln.onrender.com";
+const defaultHostedApiUrl = "https://leaf-lens-major.onrender.com";
 const configuredApiBaseUrl = String(import.meta.env.VITE_API_BASE_URL || "")
   .trim()
   .replace(/\/+$/, "");
