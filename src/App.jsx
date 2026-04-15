@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useTranslation } from "./TranslationContext";
 import { translateText } from "./translationService";
 
@@ -1672,9 +1673,37 @@ function buildClientSoilAnalysis(rawInputs) {
   };
 }
 
-function App() {
+function savePredictionHistory(userId, payload) {
+  if (!userId) {
+    return;
+  }
+
+  const historyKey = `leaflens_prediction_history_${userId}`;
+  const entry = {
+    id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    createdAt: new Date().toISOString(),
+    ...payload
+  };
+
+  try {
+    const existing = JSON.parse(localStorage.getItem(historyKey) || "[]");
+    const history = Array.isArray(existing) ? existing : [];
+    history.unshift(entry);
+    localStorage.setItem(historyKey, JSON.stringify(history.slice(0, 30)));
+  } catch {
+    // Ignore local storage write failures (private mode, quota, etc).
+  }
+}
+
+function App({ userId = "", userEmail = "", authToken = "", onLogout = null }) {
+  const navigate = useNavigate();
   const { language, setLanguage, tSync } = useTranslation();
   const t = translations[language] || translations.en;
+  const isAuthenticated = Boolean(userId);
+  const authHeaders = useMemo(
+    () => (authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    [authToken]
+  );
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [crop, setCrop] = useState("all");
@@ -1729,6 +1758,32 @@ function App() {
   ];
 
   const [detectionStatus, setDetectionStatus] = useState(null);
+
+  const redirectToAuth = (featureLabel) => {
+    navigate("/auth", {
+      replace: false,
+      state: {
+        from: {
+          pathname: "/",
+          hash: "#services"
+        }
+      }
+    });
+
+    if (featureLabel === "disease") {
+      setDetectionStatus({ type: "info", message: "Please login/signup to analyze images." });
+      return;
+    }
+
+    if (featureLabel === "weather") {
+      setWeatherStatus({ type: "info", message: "Please login/signup to get a 3-day forecast." });
+      return;
+    }
+
+    if (featureLabel === "soil") {
+      setSoilStatus({ type: "info", message: "Please login/signup to analyze soil data." });
+    }
+  };
 
   useEffect(() => {
     setInputRecommendations(buildInputRecommendations(diseaseResult, soilResult));
@@ -1787,6 +1842,9 @@ function App() {
     try {
       const response = await fetch(`${apiBaseUrl}/health`, {
         method: "GET",
+        headers: {
+          ...authHeaders
+        },
         signal: controller.signal
       });
 
@@ -1845,6 +1903,12 @@ function App() {
 
   const handleDiseaseSubmit = (event) => {
     event.preventDefault();
+
+    if (!isAuthenticated) {
+      redirectToAuth("disease");
+      return;
+    }
+
     setDetectionStatus({ type: "loading", message: t.analyzeLoading });
     setDiseaseResult(null);
 
@@ -1871,6 +1935,9 @@ function App() {
     fetch(`${apiBaseUrl}/predict`, {
       method: "POST",
       body: formData,
+      headers: {
+        ...authHeaders
+      },
       signal: controller.signal
     })
       .then(async (response) => {
@@ -1950,6 +2017,16 @@ function App() {
           isDetected: !isHealthy,
           imageAlt: `${predictedCrop} leaf uploaded for analysis`
         });
+
+        savePredictionHistory(userId, {
+          disease: diseaseName,
+          confidence: Number(confidence),
+          crop: predictedCrop,
+          needsReview,
+          invalidImage,
+          topPredictions: data.top_3 || []
+        });
+
         setDetectionStatus(null);
       })
       .catch((error) => {
@@ -1973,6 +2050,11 @@ function App() {
 
   const handleWeatherSubmit = async (event) => {
     event.preventDefault();
+
+    if (!isAuthenticated) {
+      redirectToAuth("weather");
+      return;
+    }
 
     const locationName = location.trim() || "Delhi";
     setWeatherStatus({ type: "loading", message: `${t.forecastLoading} ${locationName}...` });
@@ -2023,13 +2105,20 @@ function App() {
 
   const handleSoilSubmit = async (event) => {
     event.preventDefault();
+
+    if (!isAuthenticated) {
+      redirectToAuth("soil");
+      return;
+    }
+
     setSoilStatus({ type: "loading", message: t.soilAnalyzeLoading });
 
     try {
       const response = await fetch(`${apiBaseUrl}/analyze-soil`, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          ...authHeaders
         },
         body: JSON.stringify(soilInputs)
       });
@@ -2121,6 +2210,46 @@ function App() {
             <option value="zh">中文</option>
             <option value="ar">العربية</option>
           </select>
+          <div className="auth-controls">
+            {isAuthenticated ? (
+              <>
+                {userEmail ? <span className="auth-user-chip">{userEmail}</span> : null}
+                <button
+                  type="button"
+                  className="auth-nav-button"
+                  onClick={() => navigate("/history")}
+                >
+                  History
+                </button>
+                <button
+                  type="button"
+                  className="auth-nav-button auth-nav-button-logout"
+                  onClick={async () => {
+                    if (typeof onLogout !== "function") {
+                      return;
+                    }
+
+                    try {
+                      await onLogout();
+                      navigate("/auth", { replace: true });
+                    } catch (error) {
+                      alert(error instanceof Error ? error.message : "Logout failed.");
+                    }
+                  }}
+                >
+                  Logout
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="auth-nav-button"
+                onClick={() => navigate("/auth", { state: { from: { pathname: "/" } } })}
+              >
+                Login / Signup
+              </button>
+            )}
+          </div>
           <button
             className="mobile-toggle"
             type="button"

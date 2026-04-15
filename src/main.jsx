@@ -1,7 +1,8 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App";
+import AppRouter from "./router/AppRouter";
 import { TranslationProvider } from "./TranslationContext";
+import { AuthProvider } from "./context/AuthContext";
 import "../styles.css";
 
 const rootElement = document.getElementById("root");
@@ -37,7 +38,9 @@ try {
   ReactDOM.createRoot(rootElement).render(
     <React.StrictMode>
       <TranslationProvider>
-        <App />
+        <AuthProvider>
+          <AppRouter />
+        </AuthProvider>
       </TranslationProvider>
     </React.StrictMode>
   );
