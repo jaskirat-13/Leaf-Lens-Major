@@ -451,14 +451,15 @@ def _verify_supabase_jwt(token):
     header = jwt.get_unverified_header(token)
     algorithm = header.get('alg')
 
-    # Supabase projects may use RS256 (asymmetric, JWKS) or HS256 (legacy JWT secret).
-    if algorithm == 'RS256':
+    # Supabase projects may use asymmetric keys (RS256/ES256 via JWKS)
+    # or legacy shared secret mode (HS256).
+    if algorithm in ('RS256', 'ES256'):
         jwks_client = _get_jwks_client()
         signing_key = jwks_client.get_signing_key_from_jwt(token).key
         return jwt.decode(
             token,
             signing_key,
-            algorithms=['RS256'],
+            algorithms=[algorithm],
             audience='authenticated',
             issuer=SUPABASE_ISSUER,
             options={'require': ['exp', 'iat', 'sub']}
