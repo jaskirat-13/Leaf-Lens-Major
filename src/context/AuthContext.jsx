@@ -73,7 +73,14 @@ export function AuthProvider({ children }) {
   }, [session]);
 
   const signUp = async ({ email, password }) => {
-    const { data, error } = await supabase.auth.signUp({ email, password });
+    const emailRedirectTo = `${window.location.origin}/auth`;
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo
+      }
+    });
     if (error) throw error;
 
     if (data?.session?.user) {
