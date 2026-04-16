@@ -433,6 +433,7 @@ def _require_bearer_auth():
 
 SUPABASE_URL = os.getenv('SUPABASE_URL', '').rstrip('/')
 SUPABASE_ISSUER = f"{SUPABASE_URL}/auth/v1" if SUPABASE_URL else ''
+SUPABASE_JWT_SECRET = os.getenv('SUPABASE_JWT_SECRET', '')
 _JWKS_CLIENT = None
 
 
@@ -447,19 +448,36 @@ def _get_jwks_client():
 
 
 def _verify_supabase_jwt(token):
-    jwks_client = _get_jwks_client()
-    signing_key = jwks_client.get_signing_key_from_jwt(token).key
+    header = jwt.get_unverified_header(token)
+    algorithm = header.get('alg')
 
-    # Supabase access tokens typically use aud='authenticated'.
-    payload = jwt.decode(
-        token,
-        signing_key,
-        algorithms=['RS256'],
-        audience='authenticated',
-        issuer=SUPABASE_ISSUER,
-        options={'require': ['exp', 'iat', 'sub']}
-    )
-    return payload
+    # Supabase projects may use RS256 (asymmetric, JWKS) or HS256 (legacy JWT secret).
+    if algorithm == 'RS256':
+        jwks_client = _get_jwks_client()
+        signing_key = jwks_client.get_signing_key_from_jwt(token).key
+        return jwt.decode(
+            token,
+            signing_key,
+            algorithms=['RS256'],
+            audience='authenticated',
+            issuer=SUPABASE_ISSUER,
+            options={'require': ['exp', 'iat', 'sub']}
+        )
+
+    if algorithm == 'HS256':
+        if not SUPABASE_JWT_SECRET:
+            raise RuntimeError('SUPABASE_JWT_SECRET is not configured on backend for HS256 token verification.')
+
+        return jwt.decode(
+            token,
+            SUPABASE_JWT_SECRET,
+            algorithms=['HS256'],
+            audience='authenticated',
+            issuer=SUPABASE_ISSUER,
+            options={'require': ['exp', 'iat', 'sub']}
+        )
+
+    raise InvalidTokenError(f'Unsupported JWT algorithm: {algorithm}')
 
 
 def require_supabase_auth(handler):
