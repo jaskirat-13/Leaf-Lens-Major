@@ -1,24 +1,22 @@
-﻿# LeafLens - Plant Disease and Farm Intelligence Platform
+﻿# LeafLens - Crop Intelligence Platform
 
-LeafLens is a full-stack project for crop support with:
+LeafLens is a full-stack agriculture assistant with ML disease detection, soil intelligence, weather guidance, authentication, and downloadable field reports.
 
-- Plant disease detection from leaf images (PyTorch model)
-- Soil profile analysis and recommendations
-- 3-day weather forecast and farming advisories
-- Nearby agro-store discovery (map APIs)
-- Multi-language UI support
+- Frontend: React + Vite (deployed on Vercel)
+- Backend: Flask + PyTorch (deployed on Render)
+- Auth: Supabase Email/Password + password reset
 
-The frontend is built with React + Vite and the backend is Flask + PyTorch.
+## Core Features
 
-## Features
-
-- Disease prediction API with top-3 classes and confidence scores
-- Crop-aware prediction filtering
-- Invalid/low-quality image checks (blur, lighting, vegetation ratio)
-- Soil analysis endpoint with fertility scoring, risk flags, and recommendations
-- Health check endpoint for uptime monitoring
-- Frontend runtime API-base configuration via `VITE_API_BASE_URL`
-- Language support through translation context and translation service
+- Leaf disease prediction from image upload (top-3 classes with confidence)
+- Soil analysis with score, risk factors, and recommendations
+- 3-day weather forecast and crop-aware advisory
+- Nearby agri-store lookup with geolocation APIs
+- Multi-language support
+- User authentication (signup, login, logout, forgot/reset password)
+- Per-user prediction history view
+- Professional PDF report download from backend
+- JWT-protected backend inference/report endpoints
 
 ## Tech Stack
 
@@ -26,22 +24,26 @@ The frontend is built with React + Vite and the backend is Flask + PyTorch.
 
 - React 18
 - Vite 5
+- React Router DOM 6
+- Supabase JS
 - Plain CSS
 
 ### Backend
 
 - Flask 3
 - Flask-CORS
+- Gunicorn
 - PyTorch 2.0.1 + TorchVision 0.15.2
 - NumPy, Pillow
-- Gunicorn (production server)
+- ReportLab (PDF generation)
+- PyJWT[crypto] (JWT verification)
 
-### External APIs used by frontend
+### External APIs
 
-- Open-Meteo (forecast + geocoding)
-- Nominatim (search)
-- Overpass API (agro store lookup)
-- MyMemory API (translation)
+- Open-Meteo
+- Nominatim
+- Overpass API
+- MyMemory translation API
 
 ## Project Structure
 
@@ -53,6 +55,7 @@ The frontend is built with React + Vite and the backend is Flask + PyTorch.
 |- .python-version
 |- vercel.json
 |- .env.example
+|- supabase_profiles.sql
 |- plant-disease-model-complete (1).pth
 |- package.json
 |- vite.config.js
@@ -61,6 +64,12 @@ The frontend is built with React + Vite and the backend is Flask + PyTorch.
 |- src/
 |  |- App.jsx
 |  |- main.jsx
+|  |- router/AppRouter.jsx
+|  |- context/AuthContext.jsx
+|  |- lib/supabaseClient.js
+|  |- components/auth/ProtectedRoute.jsx
+|  |- pages/AuthPage.jsx
+|  |- pages/PredictionHistoryPage.jsx
 |  |- TranslationContext.jsx
 |  |- translationService.js
 |- debug_api_behavior.py
@@ -77,27 +86,33 @@ The frontend is built with React + Vite and the backend is Flask + PyTorch.
 - Python 3.11.x
 - pip
 
-Important:
+Notes:
 
-- Keep the model file `plant-disease-model-complete (1).pth` in the project root.
-- Python 3.14 is not compatible with this pinned PyTorch version (`torch==2.0.1`).
+- Keep `plant-disease-model-complete (1).pth` in project root.
+- Python 3.14 is not compatible with pinned `torch==2.0.1`.
 
 ## Environment Variables
 
-Use `.env.example` as reference:
+Use `.env.example` as the frontend reference.
+
+### Frontend (.env)
 
 ```env
 VITE_API_BASE_URL=
+VITE_SUPABASE_URL=
+VITE_SUPABASE_ANON_KEY=
 ```
 
-Behavior:
+- `VITE_API_BASE_URL`: Render backend base URL (for production)
+- `VITE_SUPABASE_URL`: Supabase project URL
+- `VITE_SUPABASE_ANON_KEY`: Supabase anon public key
 
-- Localhost frontend uses `http://localhost:5000` if this variable is empty.
-- Hosted frontend uses:
-	- `VITE_API_BASE_URL` when provided, otherwise
-	- the default hosted backend URL defined in `src/App.jsx`.
+### Backend (Render Environment)
 
-## Run Locally
+- `SUPABASE_URL`: required for JWKS/JWT issuer validation
+- `SUPABASE_JWT_SECRET`: only required if your project issues HS256 tokens (legacy mode)
+
+## Local Development
 
 ### 1. Start backend
 
@@ -108,7 +123,7 @@ pip install -r requirements.txt
 python api.py
 ```
 
-Backend starts on `http://localhost:5000`.
+Backend runs on `http://localhost:5000`.
 
 ### 2. Start frontend
 
@@ -117,153 +132,132 @@ npm install
 npm run dev
 ```
 
-Frontend starts on Vite dev server (typically `http://localhost:5173`).
+Frontend runs on Vite dev server, usually `http://localhost:5173`.
 
 ## Frontend Scripts
 
 ```bash
-npm run dev      # start development server
-npm run build    # production build
-npm run preview  # preview production build locally
+npm run dev
+npm run build
+npm run preview
 ```
 
-## API Reference
+## Authentication Flow
 
-### GET `/`
+- Signup sends confirmation link to `${window.location.origin}/auth`.
+- Forgot-password sends reset link to `${window.location.origin}/auth?mode=reset`.
+- `/auth` handles login/signup/forgot/reset modes.
 
-Returns service metadata and available endpoints.
+Supabase dashboard settings must include both local and production URLs.
 
-### GET `/health`
+Recommended values:
 
-Returns backend status and number of model classes.
+- Site URL:
+  - `https://leaf-lens-major.vercel.app`
+- Additional Redirect URLs:
+  - `https://leaf-lens-major.vercel.app`
+  - `https://leaf-lens-major.vercel.app/auth`
+  - `http://localhost:5173`
+  - `http://localhost:5173/auth`
 
-### POST `/predict`
+## API Endpoints
 
-Content type: `multipart/form-data`
+### Public
 
-Fields:
+- `GET /`
+- `GET /health`
 
-- `image` (required): leaf image file
-- `crop` (optional): crop filter (`all`, `tomato`, `potato`, etc.)
+### Auth Required (Bearer token)
 
-Example:
+- `POST /predict`
+- `POST /analyze-soil`
+- `POST /download-report`
 
-```bash
-curl -X POST \
-	-F "image=@leaf.jpg" \
-	-F "crop=tomato" \
-	http://localhost:5000/predict
-```
+The frontend sends Supabase access token in:
 
-Response includes:
-
-- `disease`, `confidence`, `top_3`
-- `needs_review`, `invalid_image`
-- `confidence_margin`, image-quality metrics, and uncertainty reasons
-
-### POST `/analyze-soil`
-
-Content type: `application/json`
-
-Example request:
-
-```json
-{
-	"crop": "Tomato",
-	"ph": 6.7,
-	"nitrogen": 80,
-	"phosphorus": 45,
-	"potassium": 130,
-	"moisture": 52,
-	"organicCarbon": 1.0,
-	"temperature": 28,
-	"rainfall": 40
-}
-```
-
-Response includes fertility score, risk categories, drivers, and recommendations.
+`Authorization: Bearer <token>`
 
 ## Deployment
 
 ### Backend on Render
 
-This project includes:
-
-- `render.yaml` (service definition)
-- `.python-version` (pins Python to 3.11.9)
-
-Render settings summary:
+This repo includes `render.yaml` and `.python-version`.
 
 - Runtime: Python
 - Build command: `pip install -r requirements.txt`
 - Start command: `gunicorn --bind 0.0.0.0:$PORT api:app`
 
-After deploy, test:
+After deployment, test:
 
 - `https://<your-render-domain>/health`
 
 ### Frontend on Vercel
 
-This project includes `vercel.json` with Vite build config.
+`vercel.json` is configured for Vite and SPA rewrites.
 
-In Vercel project settings, add env variable:
+Current rewrite ensures deep links such as `/auth` work:
+
+```json
+"rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+```
+
+In Vercel Environment Variables, set:
 
 - `VITE_API_BASE_URL=https://<your-render-domain>`
+- `VITE_SUPABASE_URL=https://<your-supabase-project>.supabase.co`
+- `VITE_SUPABASE_ANON_KEY=<your-anon-key>`
 
-Then redeploy.
-
-Important:
-
-- Set env vars in Vercel dashboard (not inside `vercel.json`).
+Redeploy after any env var change.
 
 ## Troubleshooting
 
-### Render build uses Python 3.14 and fails torch install
+### Reset/confirm email opens wrong URL
 
 Cause:
 
-- `torch==2.0.1` wheels are available up to Python 3.11.
+- Supabase redirect settings or frontend redirect option not aligned with current domain.
 
 Fix:
 
-- Ensure `.python-version` is present with `3.11.9`.
+- Ensure auth redirects use current origin (already implemented in app).
+- Add production and localhost URLs in Supabase URL Configuration.
 
-### Vercel tries to install Python requirements
+### Vercel returns 404 on /auth
 
 Cause:
 
-- Monorepo root contains backend files and Vercel auto-detected Python.
+- SPA deep-link rewrite missing.
 
 Fix:
 
-- Keep `vercel.json` with explicit Node/Vite build commands.
-- Configure `VITE_API_BASE_URL` in Vercel project settings.
+- Keep rewrite rule in `vercel.json` mapping all routes to `/index.html`.
 
-### API unreachable from frontend
+### Render build fails with torch dependency
+
+Cause:
+
+- Python version too new for pinned torch wheel.
+
+Fix:
+
+- Keep `.python-version` at `3.11.9`.
+
+### Backend returns auth error
 
 Checklist:
 
-- Backend `/health` responds
-- `VITE_API_BASE_URL` is set correctly in Vercel
-- Redeploy after env var changes
-- No trailing spaces in env var value
+- Frontend user is logged in and token is present
+- `SUPABASE_URL` is set on Render
+- If token algorithm is HS256, set `SUPABASE_JWT_SECRET`
+- If asymmetric tokens (RS256/ES256), ensure internet access to Supabase JWKS endpoint
 
 ## Utility Scripts
-
-These files help debugging and inspection during development:
 
 - `inspect_model.py`
 - `test_model.py`
 - `debug_api_behavior.py`
 - `debug_model_behavior.py`
 - `debug_predict.py`
-
-## Notes
-
-- CORS is enabled in backend (`CORS(app)`).
-- Model is loaded at startup, so first boot can take longer.
-- For production-scale usage, consider request limits, authentication, and model optimization.
-
 
 ## Live Demo
 
