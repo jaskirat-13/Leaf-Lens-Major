@@ -8,11 +8,16 @@ import PredictionHistoryPage from "../pages/PredictionHistoryPage";
 
 function AppRouteWrapper() {
   const { user, session, signOut } = useAuth();
+  const inferredName =
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    (user?.email ? user.email.split("@")[0] : "LeafLens User");
 
   return (
     <App
       userId={user?.id || ""}
       userEmail={user?.email || ""}
+      userName={inferredName}
       authToken={session?.access_token || ""}
       onLogout={signOut}
     />

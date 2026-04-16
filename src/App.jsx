@@ -1695,7 +1695,42 @@ function savePredictionHistory(userId, payload) {
   }
 }
 
-function App({ userId = "", userEmail = "", authToken = "", onLogout = null }) {
+function buildCropRecommendationsForReport(diseaseResult, soilResult) {
+  const recommendations = [];
+
+  if (diseaseResult?.needsReview) {
+    recommendations.push("Retake a clearer leaf image and re-run diagnosis before applying heavy inputs.");
+  }
+
+  if (diseaseResult?.isDetected) {
+    recommendations.push("Isolate affected plants and monitor nearby rows for early spread.");
+  } else {
+    recommendations.push("Continue preventive monitoring with weekly scouting and canopy hygiene.");
+  }
+
+  if (soilResult?.water_risk === "Drought Stress") {
+    recommendations.push("Plan smaller and more frequent irrigation cycles with moisture conservation practices.");
+  } else if (soilResult?.water_risk === "Waterlogging Risk") {
+    recommendations.push("Improve drainage and avoid fertilizer application before heavy rainfall events.");
+  }
+
+  if (Array.isArray(soilResult?.recommendations)) {
+    recommendations.push(...soilResult.recommendations.slice(0, 2));
+  }
+
+  const unique = [];
+  const seen = new Set();
+  for (const item of recommendations) {
+    const normalized = String(item || "").trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    unique.push(normalized);
+  }
+
+  return unique.slice(0, 6);
+}
+
+function App({ userId = "", userEmail = "", userName = "LeafLens User", authToken = "", onLogout = null }) {
   const navigate = useNavigate();
   const { language, setLanguage, tSync } = useTranslation();
   const t = translations[language] || translations.en;
@@ -1758,6 +1793,7 @@ function App({ userId = "", userEmail = "", authToken = "", onLogout = null }) {
   ];
 
   const [detectionStatus, setDetectionStatus] = useState(null);
+  const [reportDownloadStatus, setReportDownloadStatus] = useState(null);
 
   const redirectToAuth = (featureLabel) => {
     navigate("/auth", {
@@ -2141,6 +2177,78 @@ function App({ userId = "", userEmail = "", authToken = "", onLogout = null }) {
     }
   };
 
+  const handleDownloadReport = async () => {
+    if (!isAuthenticated) {
+      redirectToAuth("disease");
+      return;
+    }
+
+    if (!diseaseResult) {
+      setReportDownloadStatus({ type: "error", message: "Run disease analysis before downloading report." });
+      return;
+    }
+
+    try {
+      setReportDownloadStatus({ type: "loading", message: "Generating PDF report..." });
+
+      const payload = {
+        userName,
+        userEmail,
+        detection: {
+          disease: diseaseResult.name,
+          confidence: diseaseResult.confidence
+        },
+        recommendations: {
+          pesticides: inputRecommendations.pesticides.map((item) => `${item.name} - ${item.dosage}`),
+          fertilizers: inputRecommendations.fertilizers.map((item) => `${item.name} - ${item.dosage}`),
+          cropRecommendations: buildCropRecommendationsForReport(diseaseResult, soilResult)
+        }
+      };
+
+      const response = await fetch(`${apiBaseUrl}/download-report`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        let message = "Failed to generate report.";
+        try {
+          const errorPayload = await response.json();
+          message = errorPayload?.error || message;
+        } catch {
+          message = `Report request failed with status ${response.status}.`;
+        }
+        throw new Error(message);
+      }
+
+      const blob = await response.blob();
+      if (!blob || blob.size === 0) {
+        throw new Error("Empty PDF response received from server.");
+      }
+
+      const blobUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      anchor.href = blobUrl;
+      anchor.download = `leaflens_crop_report_${timestamp}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(blobUrl);
+
+      setReportDownloadStatus({ type: "success", message: "PDF report downloaded successfully." });
+    } catch (error) {
+      setReportDownloadStatus({
+        type: "error",
+        message: error instanceof Error ? error.message : "Unable to download report right now."
+      });
+    }
+  };
+
   const handleLoadFieldSupport = async (event) => {
     event.preventDefault();
 
@@ -2491,6 +2599,20 @@ function App({ userId = "", userEmail = "", authToken = "", onLogout = null }) {
                         <p>
                           <strong>Recommendation:</strong> {diseaseResult.advice}
                         </p>
+                        <div className="report-download-wrap">
+                          <button
+                            type="button"
+                            className="report-download-button"
+                            onClick={handleDownloadReport}
+                          >
+                            Download Report
+                          </button>
+                          {reportDownloadStatus ? (
+                            <p className={`report-download-status report-download-status-${reportDownloadStatus.type}`}>
+                              {reportDownloadStatus.message}
+                            </p>
+                          ) : null}
+                        </div>
                       </div>
                       <div className="result-side">
                         <img

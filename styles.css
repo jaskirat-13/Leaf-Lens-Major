@@ -1043,6 +1043,48 @@ section { padding:5rem 0; }
     overflow-wrap:anywhere;
 }
 
+.report-download-wrap {
+    display:grid;
+    gap:0.5rem;
+}
+
+.report-download-button {
+    border:none;
+    border-radius:14px;
+    padding:0.72rem 0.9rem;
+    width:100%;
+    font:inherit;
+    font-weight:800;
+    cursor:pointer;
+    color:#fff;
+    background:linear-gradient(135deg, #1e6139, #2f7d49);
+    box-shadow:0 10px 24px rgba(30, 97, 57, 0.2);
+    transition:transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.report-download-button:hover {
+    transform:translateY(-1px);
+    box-shadow:0 14px 28px rgba(30, 97, 57, 0.24);
+}
+
+.report-download-status {
+    margin:0;
+    font-size:0.86rem;
+    font-weight:700;
+}
+
+.report-download-status-loading {
+    color:#365b76;
+}
+
+.report-download-status-success {
+    color:#1d6339;
+}
+
+.report-download-status-error {
+    color:#8d2f23;
+}
+
 .result-card[data-severity="high"] .result-pill {
     background:#f8cdc5;
     color:#7f251b;

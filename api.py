@@ -1,13 +1,21 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file, g
 from flask_cors import CORS
 import __main__
 import os
+from datetime import datetime
+from io import BytesIO
+from functools import wraps
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
 from PIL import Image
 import io
 import numpy as np
+import jwt
+from jwt import InvalidTokenError
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 
 # ===== ResNet9 Model Definition =====
 def conv_block(in_channels, out_channels, pool=False):
@@ -345,6 +353,138 @@ def should_flag_invalid_input(quality, confidence_score, confidence_margin):
 
     return (len(reasons) > 0, reasons)
 
+
+def _draw_logo(pdf, x, y):
+    # Simple vector logo mark for LeafLens branding.
+    pdf.setFillColor(colors.Color(0.17, 0.46, 0.27))
+    pdf.circle(x + 9, y - 7, 6, stroke=0, fill=1)
+    pdf.setFillColor(colors.Color(0.33, 0.63, 0.36))
+    pdf.circle(x + 16, y - 12, 8, stroke=0, fill=1)
+    pdf.setFillColor(colors.Color(0.78, 0.44, 0.18))
+    pdf.roundRect(x + 22, y - 17, 10, 4, 2, stroke=0, fill=1)
+
+
+def _draw_section_title(pdf, text, y):
+    pdf.setFillColor(colors.Color(0.11, 0.26, 0.18))
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(52, y, text)
+    pdf.setStrokeColor(colors.Color(0.82, 0.88, 0.82))
+    pdf.setLineWidth(1)
+    pdf.line(52, y - 4, 545, y - 4)
+    return y - 20
+
+
+def _draw_wrapped_lines(pdf, text, y, max_chars=95, bullet=False):
+    if not text:
+        return y
+
+    text = str(text).strip()
+    if not text:
+        return y
+
+    words = text.split()
+    lines = []
+    current = []
+    current_len = 0
+
+    for word in words:
+        if current_len + len(word) + (1 if current else 0) > max_chars:
+            lines.append(" ".join(current))
+            current = [word]
+            current_len = len(word)
+        else:
+            current.append(word)
+            current_len += len(word) + (1 if current_len else 0)
+
+    if current:
+        lines.append(" ".join(current))
+
+    pdf.setFillColor(colors.Color(0.16, 0.2, 0.17))
+    pdf.setFont("Helvetica", 10.5)
+
+    for index, line in enumerate(lines):
+        if y < 64:
+            pdf.showPage()
+            y = 780
+            pdf.setFont("Helvetica", 10.5)
+            pdf.setFillColor(colors.Color(0.16, 0.2, 0.17))
+
+        prefix = "- " if bullet and index == 0 else ("  " if bullet else "")
+        pdf.drawString(58, y, f"{prefix}{line}")
+        y -= 14
+
+    return y
+
+
+def _as_list(values):
+    if not values:
+        return []
+    if isinstance(values, list):
+        return [str(item).strip() for item in values if str(item).strip()]
+    return [str(values).strip()]
+
+
+def _require_bearer_auth():
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return None
+    return auth_header.split(' ', 1)[1].strip()
+
+
+SUPABASE_URL = os.getenv('SUPABASE_URL', '').rstrip('/')
+SUPABASE_ISSUER = f"{SUPABASE_URL}/auth/v1" if SUPABASE_URL else ''
+_JWKS_CLIENT = None
+
+
+def _get_jwks_client():
+    global _JWKS_CLIENT
+    if _JWKS_CLIENT is None:
+        if not SUPABASE_URL:
+            raise RuntimeError('SUPABASE_URL is not configured on backend.')
+        jwks_url = f"{SUPABASE_ISSUER}/.well-known/jwks.json"
+        _JWKS_CLIENT = jwt.PyJWKClient(jwks_url)
+    return _JWKS_CLIENT
+
+
+def _verify_supabase_jwt(token):
+    jwks_client = _get_jwks_client()
+    signing_key = jwks_client.get_signing_key_from_jwt(token).key
+
+    # Supabase access tokens typically use aud='authenticated'.
+    payload = jwt.decode(
+        token,
+        signing_key,
+        algorithms=['RS256'],
+        audience='authenticated',
+        issuer=SUPABASE_ISSUER,
+        options={'require': ['exp', 'iat', 'sub']}
+    )
+    return payload
+
+
+def require_supabase_auth(handler):
+    @wraps(handler)
+    def wrapped(*args, **kwargs):
+        token = _require_bearer_auth()
+        if not token:
+            return jsonify({'error': 'Authorization bearer token is required.'}), 401
+
+        try:
+            claims = _verify_supabase_jwt(token)
+            g.auth_user = {
+                'id': claims.get('sub'),
+                'email': claims.get('email'),
+                'claims': claims
+            }
+        except InvalidTokenError as error:
+            return jsonify({'error': f'Invalid or expired token: {error}'}), 401
+        except Exception as error:
+            return jsonify({'error': f'Authentication verification failed: {error}'}), 401
+
+        return handler(*args, **kwargs)
+
+    return wrapped
+
 # ===== Initialize Flask App =====
 app = Flask(__name__)
 CORS(app)
@@ -376,6 +516,7 @@ transform = transforms.Compose([
 ])
 
 @app.route('/predict', methods=['POST'])
+@require_supabase_auth
 def predict():
     try:
         # Get image from request
@@ -476,11 +617,12 @@ def root():
     return jsonify({
         'service': 'Leaflens ML API',
         'status': 'ok',
-        'endpoints': ['/health', '/predict', '/analyze-soil']
+        'endpoints': ['/health', '/predict', '/analyze-soil', '/download-report']
     })
 
 
 @app.route('/analyze-soil', methods=['POST'])
+@require_supabase_auth
 def analyze_soil():
     try:
         payload = request.get_json(silent=True) or {}
@@ -490,6 +632,104 @@ def analyze_soil():
         return jsonify({'error': str(error)}), 400
     except Exception as error:
         return jsonify({'error': f'Failed to analyze soil data: {error}'}), 500
+
+
+@app.route('/download-report', methods=['POST'])
+@require_supabase_auth
+def download_report():
+    try:
+        payload = request.get_json(silent=True) or {}
+        user_name = str(payload.get('userName') or payload.get('userEmail') or g.auth_user.get('email') or 'LeafLens User').strip()
+
+        detection = payload.get('detection') or {}
+        disease_name = str(detection.get('disease') or '').strip()
+        confidence = detection.get('confidence')
+
+        if not disease_name:
+            return jsonify({'error': 'Missing detected disease in report payload.'}), 400
+
+        try:
+            confidence_value = float(confidence)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'Invalid confidence score in report payload.'}), 400
+
+        recommendations = payload.get('recommendations') or {}
+        pesticide_list = _as_list(recommendations.get('pesticides'))
+        fertilizer_list = _as_list(recommendations.get('fertilizers'))
+        crop_recommendations = _as_list(recommendations.get('cropRecommendations'))
+
+        if not pesticide_list and not fertilizer_list and not crop_recommendations:
+            return jsonify({'error': 'At least one recommendation list is required.'}), 400
+
+        buffer = BytesIO()
+        pdf = canvas.Canvas(buffer, pagesize=A4)
+        width, height = A4
+
+        # Header and title block.
+        pdf.setFillColor(colors.Color(0.93, 0.96, 0.93))
+        pdf.rect(0, height - 110, width, 110, stroke=0, fill=1)
+        _draw_logo(pdf, 50, height - 48)
+
+        pdf.setFillColor(colors.Color(0.10, 0.24, 0.17))
+        pdf.setFont("Helvetica-Bold", 20)
+        pdf.drawString(88, height - 52, "LeafLens Crop Report")
+
+        pdf.setFont("Helvetica", 10)
+        pdf.setFillColor(colors.Color(0.28, 0.38, 0.31))
+        pdf.drawString(88, height - 68, "AI-supported crop disease and input recommendation summary")
+
+        y = height - 140
+
+        y = _draw_section_title(pdf, "User Details", y)
+        generated_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        y = _draw_wrapped_lines(pdf, f"User Name: {user_name}", y)
+        y = _draw_wrapped_lines(pdf, f"Generated At: {generated_at}", y)
+
+        y -= 6
+        y = _draw_section_title(pdf, "Disease Detection", y)
+        y = _draw_wrapped_lines(pdf, f"Detected Disease: {disease_name}", y)
+        y = _draw_wrapped_lines(pdf, f"Top Confidence Score: {confidence_value:.2f}%", y)
+
+        y -= 6
+        y = _draw_section_title(pdf, "Recommendations", y)
+
+        if pesticide_list:
+            y = _draw_wrapped_lines(pdf, "Pesticides:", y)
+            for item in pesticide_list:
+                y = _draw_wrapped_lines(pdf, item, y, bullet=True)
+            y -= 4
+
+        if fertilizer_list:
+            y = _draw_wrapped_lines(pdf, "Fertilizers:", y)
+            for item in fertilizer_list:
+                y = _draw_wrapped_lines(pdf, item, y, bullet=True)
+            y -= 4
+
+        if crop_recommendations:
+            y = _draw_wrapped_lines(pdf, "Crop Recommendations:", y)
+            for item in crop_recommendations:
+                y = _draw_wrapped_lines(pdf, item, y, bullet=True)
+
+        # Footer.
+        pdf.setStrokeColor(colors.Color(0.84, 0.88, 0.84))
+        pdf.line(52, 48, 545, 48)
+        pdf.setFillColor(colors.Color(0.35, 0.44, 0.38))
+        pdf.setFont("Helvetica-Oblique", 9)
+        pdf.drawString(52, 34, "Generated by LeafLens - Decision support report")
+
+        pdf.save()
+        buffer.seek(0)
+
+        filename = f"leaflens_crop_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        return send_file(
+            buffer,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=filename
+        )
+
+    except Exception as error:
+        return jsonify({'error': f'Failed to generate report: {error}'}), 500
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', '5000'))
